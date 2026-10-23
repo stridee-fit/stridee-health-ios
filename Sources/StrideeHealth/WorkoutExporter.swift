@@ -77,7 +77,8 @@ struct WorkoutExporter {
                     horizontalAccuracy: $0.horizontalAccuracy,
                     verticalAccuracy: $0.verticalAccuracy
                 )
-            }
+            },
+            events: (workout.workoutEvents ?? []).compactMap(Self.pauseEvent)
         )
 
         let encoder = JSONEncoder()
@@ -107,8 +108,10 @@ struct WorkoutExporter {
         let cyclingPower: [RawSample]
         let cyclingCadence: [RawSample]
         let route: [RawLocation]
+        let events: [RawEvent]
     }
     private struct RawSample: Codable { let t: Date; let v: Double }
+    private struct RawEvent: Codable { let t: Date; let type: String }
     private struct RawLocation: Codable {
         let t: Date
         let lat: Double
@@ -144,6 +147,20 @@ struct WorkoutExporter {
         if let model = workout.device?.model, !model.isEmpty { return model }
         let src = workout.sourceRevision.source.name
         return src.isEmpty ? nil : src
+    }
+
+    /// A pause or resume, the only workout events the server reads. It pairs
+    /// them into the FIT file's timer events.
+    private static func pauseEvent(_ event: HKWorkoutEvent) -> RawEvent? {
+        let type: String
+        switch event.type {
+        case .pause: type = "pause"
+        case .resume: type = "resume"
+        case .motionPaused: type = "motionPaused"
+        case .motionResumed: type = "motionResumed"
+        default: return nil
+        }
+        return RawEvent(t: event.dateInterval.start, type: type)
     }
 
     // MARK: - HealthKit queries
