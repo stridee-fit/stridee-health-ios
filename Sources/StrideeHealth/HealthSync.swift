@@ -43,7 +43,7 @@ public final class HealthSync: ObservableObject {
     public nonisolated var isHealthDataAvailable: Bool { HKHealthStore.isHealthDataAvailable() }
 
     private let store = HKHealthStore()
-    private let queue = UploadQueue()
+    let queue = UploadQueue()
     let state = SyncState()
     let log = Logger(subsystem: "fit.stridee.health", category: "sync")
 
@@ -54,6 +54,7 @@ public final class HealthSync: ObservableObject {
     var scheduleSync: Task<HealthSyncError?, Never>?
     private var observers: [HKObserverQuery] = []
     private var currentSync: Task<HealthSyncError?, Never>?
+    private var recordingUpload: Task<HealthSyncError?, Never>?
     private var resyncRequested = false
     private var foregroundObserver: NSObjectProtocol?
 
@@ -86,6 +87,10 @@ public final class HealthSync: ObservableObject {
             Task { await self.confirmConnection() }
         }
 
+        if !state.isConnected, queue.items().contains(where: { $0.kind == .recording }) {
+            Task { await self.uploadRecordings() }
+        }
+
         if state.pendingRemoteDisconnect, let api {
             Task {
                 if (try? await api.deleteConnection()) != nil { self.state.pendingRemoteDisconnect = false }
@@ -97,8 +102,12 @@ public final class HealthSync: ObservableObject {
                 forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
             ) { [weak self] _ in
                 Task { @MainActor in
-                    guard let self, self.state.isConnected else { return }
-                    try? await self.syncNow()
+                    guard let self else { return }
+                    if self.state.isConnected {
+                        try? await self.syncNow()
+                    } else {
+                        await self.uploadRecordings()
+                    }
                 }
             }
         }
@@ -224,7 +233,8 @@ public final class HealthSync: ObservableObject {
         stopObserving()
         currentSync?.cancel()
         scheduleSync?.cancel()
-        queue.removeAll()
+        // Recordings are the app's own, not Apple Health sync's: they still go.
+        queue.removeAll(except: [.recording])
         state.reset()
         await removeScheduledWorkouts()
         status = Status()
@@ -250,7 +260,7 @@ public final class HealthSync: ObservableObject {
     func markDisconnectedRemotely() {
         log.notice("disconnected on the server; stopping")
         stopObserving()
-        queue.removeAll()
+        queue.removeAll(except: [.recording])
         state.reset()
         status.isConnected = false
         status.pendingUploads = 0
@@ -285,6 +295,33 @@ public final class HealthSync: ObservableObject {
         let error = await task.value
         currentSync = nil
         if let error { throw error }
+    }
+
+    /// Upload the workouts ``WorkoutRecorder`` queued — whether or not this
+    /// user connected Apple Health sync, since recording one is the consent.
+    /// Connected, it is part of an ordinary sync.
+    func uploadRecordings() async {
+        if state.isConnected {
+            try? await syncNow()
+            return
+        }
+        guard let api else { return }
+        if let running = recordingUpload {
+            _ = await running.value
+            return
+        }
+        let task = Task { () -> HealthSyncError? in
+            // Finish the upload if the app is backgrounded mid-way.
+            let background = UIApplication.shared.beginBackgroundTask(withName: "StrideeHealth recording")
+            defer { UIApplication.shared.endBackgroundTask(background) }
+            return await drain(api, only: [.recording])
+        }
+        recordingUpload = task
+        if let error = await task.value {
+            log.error("recording upload stopped: \(error.localizedDescription, privacy: .public)")
+        }
+        recordingUpload = nil
+        status.pendingUploads = queue.count
     }
 
     private func performSync() async -> HealthSyncError? {
@@ -335,9 +372,17 @@ public final class HealthSync: ObservableObject {
         let (workouts, anchor) = await fetchWorkouts(after: state.workoutAnchor)
         let exporter = WorkoutExporter(store: store)
 
+        // Workouts the recorder already queued itself, with the route it kept.
+        var skipped: Set<String> = []
         for workout in workouts {
             let source = workout.sourceRevision.source.bundleIdentifier
             if configuration.excludedSourceBundleIDs.contains(source) { continue }
+            if workout.metadata?[RecordedWorkoutWriter.uploadedByAppMetadataKey] as? Bool == true { continue }
+            if let id = workout.metadata?[RecordedWorkoutWriter.recordingMetadataKey] as? String,
+               state.recordedWorkouts.contains(id) {
+                skipped.insert(id)
+                continue
+            }
             // Off the main actor: a long ride's route is a lot of JSON.
             let exported = await Task.detached { await exporter.export(workout) }.value
             guard let exported else {
@@ -350,6 +395,8 @@ public final class HealthSync: ObservableObject {
             queue.enqueue(exported.rawData, kind: .workout, key: exported.externalId)
         }
         guard state.isConnected else { return }
+        // Re-read, not overwritten: a recording may have finished meanwhile.
+        if !skipped.isEmpty { state.recordedWorkouts = state.recordedWorkouts.subtracting(skipped) }
         if let anchor { state.workoutAnchor = anchor }
         if !workouts.isEmpty { recordDataFound(.workouts) }
     }
@@ -420,8 +467,8 @@ public final class HealthSync: ObservableObject {
     /// again cannot succeed, and keeping it would block everything behind it.
     /// A transport or token failure stops the drain and leaves the rest for the
     /// next sync.
-    private func drain(_ api: APIClient) async -> HealthSyncError? {
-        let items = queue.items()
+    private func drain(_ api: APIClient, only kinds: Set<UploadQueue.Kind>? = nil) async -> HealthSyncError? {
+        let items = queue.items().filter { kinds?.contains($0.kind) ?? true }
         guard !items.isEmpty else { return nil }
 
         var dropped: HealthSyncError?
@@ -436,6 +483,12 @@ public final class HealthSync: ObservableObject {
                 switch item.kind {
                 case .workout: outcome = try await api.uploadWorkout(body)
                 case .wellness: outcome = try await api.uploadWellness(body)
+                case .recording: outcome = try await api.uploadRecording(body)
+                }
+                if outcome == .notConnected, item.kind == .recording {
+                    // The recordings door connects rather than refusing; an
+                    // answer like this is the API's fault. Try again later.
+                    return .transport("recording refused as not connected")
                 }
                 if outcome == .notConnected {
                     markDisconnectedRemotely()

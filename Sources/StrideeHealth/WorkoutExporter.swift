@@ -89,7 +89,7 @@ struct WorkoutExporter {
 
     // MARK: - Raw payload (mirrors the server's `HealthKitWorkoutPayload`)
 
-    private struct RawPayload: Codable {
+    struct RawPayload: Codable {
         var format = "healthkit.v1"
         let uuid: String
         let activityType: UInt
@@ -110,9 +110,9 @@ struct WorkoutExporter {
         let route: [RawLocation]
         let events: [RawEvent]
     }
-    private struct RawSample: Codable { let t: Date; let v: Double }
-    private struct RawEvent: Codable { let t: Date; let type: String }
-    private struct RawLocation: Codable {
+    struct RawSample: Codable { let t: Date; let v: Double }
+    struct RawEvent: Codable { let t: Date; let type: String }
+    struct RawLocation: Codable {
         let t: Date
         let lat: Double
         let lon: Double
@@ -218,7 +218,7 @@ struct WorkoutExporter {
 
     /// Map HealthKit's activity type to the server discipline code. The server
     /// normalises the string anyway, so unknown types fall back to GENERIC.
-    private static func sportMapping(_ type: HKWorkoutActivityType) -> String {
+    static func sportMapping(_ type: HKWorkoutActivityType) -> String {
         switch type {
         case .running, .trackAndField: return "RUNNING"
         case .cycling, .handCycling: return "CYCLING"

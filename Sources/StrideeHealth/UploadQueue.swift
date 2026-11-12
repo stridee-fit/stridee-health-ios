@@ -16,6 +16,9 @@ struct UploadQueue {
     enum Kind: String {
         case workout
         case wellness
+        /// A workout ``WorkoutRecorder`` recorded. Uploads whether or not the
+        /// user connected Apple Health sync, and survives a disconnect.
+        case recording
     }
 
     struct Item {
@@ -81,7 +84,7 @@ struct UploadQueue {
         try? FileManager.default.removeItem(at: item.url)
     }
 
-    func removeAll() {
-        for item in items() { remove(item) }
+    func removeAll(except kept: Set<Kind> = []) {
+        for item in items() where !kept.contains(item.kind) { remove(item) }
     }
 }

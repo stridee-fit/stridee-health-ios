@@ -138,6 +138,12 @@ struct APIClient: Sendable {
         try await send("POST", "v1/device/apple/workouts", body: body)
     }
 
+    /// A workout recorded in the app. Connects the user if they are not:
+    /// recording is the consent, so this never answers "not connected".
+    func uploadRecording(_ body: Data) async throws -> Outcome {
+        try await send("POST", "v1/device/apple/recordings", body: body)
+    }
+
     func uploadWellness(_ body: Data) async throws -> Outcome {
         try await send("POST", "v1/device/apple/wellness", body: body)
     }

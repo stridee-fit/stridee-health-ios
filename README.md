@@ -108,6 +108,82 @@ Edits replace the scheduled workout and deletes remove it. The Workout app holds
 fixed number of scheduled workouts, so the nearest dates go on first and the rest wait
 their turn. When the user does one, its `activity.created` carries `workout_id`.
 
+## Recording workouts with GPS
+
+Record runs, rides, walks and hikes on the iPhone itself. When the athlete finishes, the
+workout is saved to Apple Health with its route and uploaded to Stridee. Your backend gets
+the same `activity.created` and FIT file it would get for an Apple Watch workout, so there is
+nothing to build on the server.
+
+```swift
+@ObservedObject var recorder = WorkoutRecorder.shared
+
+await recorder.requestAuthorization()       // location, then Apple Health write access, once
+
+try recorder.start(.running)                 // .running, .cycling, .walking, .hiking
+recorder.pause()
+recorder.resume()
+let workout = try await recorder.finish()    // saved and uploading
+recorder.discard()                           // or throw it away
+
+// Live screen
+recorder.state            // .idle, .recording, .paused, .autoPaused
+recorder.metrics          // distance, movingTime, elapsedTime, currentSpeed/Pace, averageSpeed/Pace, elevationGain
+recorder.route            // [CLLocationCoordinate2D] for a map
+recorder.gpsAccuracy      // metres, nil with no lock; call warmUpGPS() on a start screen
+```
+
+Add to `Info.plist`:
+
+| Key | |
+|---|---|
+| `NSLocationWhenInUseUsageDescription` | Required. "While in use" is enough |
+| `UIBackgroundModes` → `location` | Keeps recording when the screen is locked |
+| `NSHealthUpdateUsageDescription` | To save to Apple Health. Without it the workout still reaches Stridee |
+| `NSMotionUsageDescription` | Optional. Uses the barometer for elevation instead of GPS altitude |
+
+How it behaves:
+
+- **A crash loses nothing.** Every GPS fix is written to disk as it arrives. If the app is
+  killed mid-run, the recording comes back paused the next time `WorkoutRecorder.shared` is
+  used, with `wasRecovered` set. Touch it at launch to restore it before the home screen shows.
+- **Auto-pause** stops the clock when the athlete stops, and starts it again when they move.
+  The thresholds are tuned per sport. Turn it off with `start(.cycling, options: .init(autoPause: false))`.
+- **GPS noise is filtered.** Inaccurate fixes, GPS jumps (coming out of a tunnel) and drift
+  while standing still are not counted as distance.
+- **Sent once, connected or not.** A recorded workout goes to
+  `POST /v1/device/apple/recordings` with the full route, and the Apple Health sync knows to
+  skip it. Recording counts as consent, so it uploads even for a user who never turned on
+  Apple Health sync (it connects them, and `account.connected` fires the first time).
+  Offline, it waits on disk and goes on the next launch or foreground.
+- **Auto-laps**: every 1 km on foot and every 5 km on a bike, or set `lapDistance`.
+  `recorder.laps` has each lap's pace, time and average heart rate.
+- **Structured workouts**: pass `sections:` (warm-up, intervals, recoveries…) and
+  `recorder.currentSection` / `sectionRemaining` follow them as each one's distance or time is done.
+- **Pace cues**: with a `targetPace` or sections that target one, the recorder tells you
+  when the athlete falls behind, surges ahead or gets back on target. It waits a minute
+  before the first cue, then leaves growing gaps and stops repeating itself.
+- **Events** for a voice coach, haptics or your own live view:
+
+  ```swift
+  recorder.onEvent = { event in
+      switch event {
+      case .lap(let lap): …
+      case .section(let current, let next, let finished): …
+      case .pace(.behind(let by)): …
+      case .sample(let sample): …        // every GPS fix, with totals
+      default: break
+      }
+  }
+  ```
+- **Heart-rate straps** (any Bluetooth LE strap): `HeartRateMonitor.shared` scans, connects
+  and remembers the strap, and the recorder picks its readings up on its own. It needs
+  `NSBluetoothAlwaysUsageDescription`. A strap your app already reads can be fed in with
+  `recorder.addHeartRate(bpm)`.
+- **Uploading it yourself**: `options: .init(uploadsToStridee: false)` hands everything
+  back on `FinishedWorkout` (`route`, `heartRate`, `laps`, `recordingID`) and marks the
+  Apple Health copy so it is never sent twice.
+
 ## Permissions
 
 Apple's permission sheet appears once per data type, ever. Ask well:

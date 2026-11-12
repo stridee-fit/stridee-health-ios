@@ -32,4 +32,17 @@ final class UploadQueueTests: XCTestCase {
         queue.remove(queue.items()[0])
         XCTAssertEqual(queue.count, 0)
     }
+
+    func testADisconnectKeepsRecordings() {
+        let queue = makeQueue()
+        let recording = UUID().uuidString
+        queue.enqueue(Data("w".utf8), kind: .workout, key: "W")
+        queue.enqueue(Data("h".utf8), kind: .wellness, key: "H")
+        queue.enqueue(Data("r".utf8), kind: .recording, key: recording)
+
+        queue.removeAll(except: [.recording])
+
+        XCTAssertEqual(queue.items().map(\.kind), [.recording])
+        XCTAssertTrue(queue.items()[0].url.lastPathComponent.hasSuffix("-recording-\(recording).json"))
+    }
 }

@@ -114,6 +114,21 @@ struct SyncState {
         }
     }
 
+    /// Recordings ``WorkoutRecorder`` queued for upload itself, by recording
+    /// id. The history sync skips their `HKWorkout`s once, rather than send
+    /// each a second time. Cleared on disconnect, so a later connect sends
+    /// them again with the rest of the history.
+    var recordedWorkouts: Set<String> {
+        get { Set(defaults.stringArray(forKey: key("recordedWorkouts")) ?? []) }
+        nonmutating set {
+            if newValue.isEmpty {
+                defaults.removeObject(forKey: key("recordedWorkouts"))
+            } else {
+                defaults.set(Array(newValue).sorted(), forKey: key("recordedWorkouts"))
+            }
+        }
+    }
+
     /// The scheduling authorization the API was last told about, so it is told
     /// again only when it changes.
     var declaredScheduling: String? {
@@ -129,7 +144,7 @@ struct SyncState {
     /// there with nothing that knows they are ours. Whoever removes them
     /// clears it.
     func reset() {
-        for name in ["connected", "lastSyncDate", "wellnessCollectedThrough", "workoutAnchor", "lastDataFound", "declaredScheduling"] {
+        for name in ["connected", "lastSyncDate", "wellnessCollectedThrough", "workoutAnchor", "lastDataFound", "declaredScheduling", "recordedWorkouts"] {
             defaults.removeObject(forKey: key(name))
         }
     }

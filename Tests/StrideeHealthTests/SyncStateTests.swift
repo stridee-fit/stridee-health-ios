@@ -21,11 +21,22 @@ final class SyncStateTests: XCTestCase {
         state.isConnected = true
         state.lastSyncDate = Date()
         state.lastDataFound = [.wellness: Date()]
+        state.recordedWorkouts = ["recording"]
 
         state.reset()
 
         XCTAssertFalse(state.isConnected)
         XCTAssertNil(state.lastSyncDate)
         XCTAssertTrue(state.lastDataFound.isEmpty)
+        // A reconnect sends recorded workouts again with the history.
+        XCTAssertTrue(state.recordedWorkouts.isEmpty)
+    }
+
+    func testRecordedWorkoutsRoundTrip() {
+        let state = makeState()
+        state.recordedWorkouts.insert("a")
+        state.recordedWorkouts.insert("b")
+        state.recordedWorkouts.remove("a")
+        XCTAssertEqual(state.recordedWorkouts, ["b"])
     }
 }
