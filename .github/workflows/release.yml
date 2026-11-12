@@ -1,0 +1,54 @@
+name: Release
+
+# Runs in stridee-fit/stridee-health-ios, not in the monorepo: this file lives in
+# the monorepo's sdk/ios/, which is mirrored here on every release, and GitHub
+# only reads workflows from a repository's root.
+#
+# The monorepo's release job pushes a version tag here with a deploy key, which
+# can push but cannot create releases. This turns that tag into a GitHub
+# Release with this repository's own token, so it is published by
+# github-actions[bot] rather than by whoever cut it, and its notes are the
+# version's section of CHANGELOG.md.
+#
+# Re-run it for an existing tag from the Actions tab (Run workflow → version).
+
+on:
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'An existing tag, e.g. 1.2.0'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version || github.ref_name }}
+    steps:
+      # The default branch, not the tag: main always has the newest
+      # CHANGELOG.md, with a section for every version, including ones tagged
+      # before this file existed.
+      - uses: actions/checkout@v4
+
+      - name: Notes from CHANGELOG.md
+        run: |
+          awk -v v="$VERSION" '
+            /^## / { if (found) exit; if ($2 == v) { found = 1; print > "title.txt"; next } }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s title.txt ]; then
+            echo "::error::CHANGELOG.md has no section for $VERSION"
+            exit 1
+          fi
+          # "## 1.2.0 — GPS workout recording" → "1.2.0 — GPS workout recording"
+          sed 's/^## //' title.txt > title
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$VERSION" --verify-tag --title "$(cat title)" --notes-file notes.md

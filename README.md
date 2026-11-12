@@ -243,7 +243,8 @@ policy and App Privacy labels that health data is sent to your backend through S
 ## Development
 
 This repository is a read-only mirror of `sdk/ios/` in the Stridee monorepo, where the
-API it talks to also lives. Tags here (`1.0.0`) come from `sdk-ios/v1.0.0` tags there.
+API it talks to also lives. Tags here (`1.0.0`) come from `sdk-ios/v1.0.0` tags there, and each tag's GitHub Release
+is published by CI from its section of [CHANGELOG.md](CHANGELOG.md).
 
 ```sh
 xcodebuild test -scheme StrideeHealth -destination 'platform=iOS Simulator,name=iPhone 16'
